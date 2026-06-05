@@ -1,0 +1,8 @@
+# Secrets and local runtime state — never commit these.
+.env
+.runtime/
+
+# Python / uv
+.venv/
+__pycache__/
+*.pyc

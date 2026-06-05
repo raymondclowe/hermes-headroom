@@ -1,0 +1,14 @@
+[project]
+name = "hermes-headroom"
+version = "0.1.0"
+description = "Run Hermes Agent with the Headroom compression proxy + MCP in front (via OpenRouter)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "ruamel.yaml>=0.18",
+]
+
+# This repo is a set of scripts, not an installable package — tell uv not to
+# try to build/install the project itself, just manage the dependencies.
+[tool.uv]
+package = false
