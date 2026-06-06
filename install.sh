@@ -134,7 +134,7 @@ fi
 #     with LITELLM_LOCAL_MODEL_COST_MAP=true in .env. Safe + idempotent; re-run
 #     after `uv tool upgrade headroom-ai`.
 info "Registering current OpenRouter prices into LiteLLM (for perf \$ display)…"
-python3 "$SCRIPT_DIR/lib/register_pricing.py" \
+python3 "$SCRIPT_DIR/lib/register_pricing.py" --from-logs \
   --slugs "deepseek/deepseek-v4-flash,deepseek/deepseek-v4-pro,${MODEL}" || \
   warn "Price registration skipped (compression unaffected; perf \$ may read 'unknown')."
 

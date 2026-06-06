@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,7 @@ from pathlib import Path
 MARKER = "hermes-headroom"  # tags entries we own, for clean removal
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 DEFAULT_SLUGS = ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"]
+DEFAULT_LOG_DIR = Path.home() / ".headroom" / "logs"
 
 
 def find_litellm_costmap() -> Path:
@@ -53,45 +55,66 @@ def find_litellm_costmap() -> Path:
     return Path(matches[0])
 
 
-def fetch_openrouter_pricing(slugs: list[str]) -> dict[str, dict]:
-    """Fetch current OpenRouter pricing/context for the given model slugs."""
+def fetch_catalog() -> dict[str, dict]:
+    """Fetch the OpenRouter model catalog as a {slug: model_obj} mapping."""
     req = urllib.request.Request(
         OPENROUTER_MODELS_URL, headers={"User-Agent": "hermes-headroom"})
     with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
         catalog = json.loads(resp.read().decode("utf-8")).get("data", [])
+    return {m.get("id"): m for m in catalog if m.get("id")}
 
-    by_id = {m.get("id"): m for m in catalog}
-    out: dict[str, dict] = {}
-    for slug in slugs:
-        m = by_id.get(slug)
-        if m is None:
-            print(f"[register_pricing] WARNING: {slug} not found on OpenRouter")
+
+def build_entry(model_obj: dict) -> dict:
+    """Build a LiteLLM cost-map entry from one OpenRouter model object."""
+    pricing = model_obj.get("pricing", {})
+    prompt = float(pricing.get("prompt", 0) or 0)
+    completion = float(pricing.get("completion", 0) or 0)
+    cache_read = float(pricing.get("input_cache_read", 0) or 0)
+    cache_write = float(pricing.get("input_cache_write", 0) or 0)
+    ctx = int(model_obj.get("context_length") or 0)
+
+    entry: dict[str, object] = {
+        "litellm_provider": "openrouter",
+        "mode": "chat",
+        "input_cost_per_token": prompt,
+        "output_cost_per_token": completion,
+        # Providers that don't report a distinct cache-write price bill it at
+        # the input rate.
+        "cache_creation_input_token_cost": cache_write or prompt,
+        "_source": MARKER,
+    }
+    if cache_read:
+        entry["cache_read_input_token_cost"] = cache_read
+    if ctx:
+        entry["max_tokens"] = ctx
+        entry["max_input_tokens"] = ctx
+        entry["max_output_tokens"] = ctx
+    return entry
+
+
+def discover_slugs_from_logs(log_dir: Path) -> list[str]:
+    """Scan Headroom's proxy logs for provider/model slugs actually used.
+
+    Lets the tool track whatever models flow through the proxy (profiles and
+    models change often) instead of relying on a hardcoded list. Candidates are
+    validated against the live OpenRouter catalog by the caller, so a loose
+    match here is harmless.
+    """
+    if not log_dir.is_dir():
+        return []
+    slug_re = re.compile(r"\b[a-z0-9-]+/[A-Za-z0-9][A-Za-z0-9._-]*\b")
+    found: set[str] = set()
+    for log in log_dir.glob("*.log"):
+        try:
+            text = log.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
             continue
-        pricing = m.get("pricing", {})
-        prompt = float(pricing.get("prompt", 0) or 0)
-        completion = float(pricing.get("completion", 0) or 0)
-        cache_read = float(pricing.get("input_cache_read", 0) or 0)
-        cache_write = float(pricing.get("input_cache_write", 0) or 0)
-        ctx = int(m.get("context_length") or 0)
-
-        entry: dict[str, object] = {
-            "litellm_provider": "openrouter",
-            "mode": "chat",
-            "input_cost_per_token": prompt,
-            "output_cost_per_token": completion,
-            # DeepSeek bills cache writes at the input rate unless OpenRouter
-            # reports a distinct write price.
-            "cache_creation_input_token_cost": cache_write or prompt,
-            "_source": MARKER,
-        }
-        if cache_read:
-            entry["cache_read_input_token_cost"] = cache_read
-        if ctx:
-            entry["max_tokens"] = ctx
-            entry["max_input_tokens"] = ctx
-            entry["max_output_tokens"] = ctx
-        out[slug] = entry
-    return out
+        for m in slug_re.findall(text):
+            # exclude obvious non-models (paths, the /models probe label)
+            if m.startswith(("/", "headroom", "home/")) or ":" in m:
+                continue
+            found.add(m)
+    return sorted(found)
 
 
 def load_json(path: Path) -> dict:
@@ -127,21 +150,41 @@ def verify_with_headroom_venv(slugs: list[str]) -> bool:
         return False
 
 
-def cmd_apply(slugs: list[str]) -> int:
-    """Add/refresh our price entries in the LiteLLM cost map."""
+def cmd_apply(slugs: list[str], from_logs: bool, log_dir: Path) -> int:
+    """Add/refresh price entries in the LiteLLM cost map.
+
+    Registers the explicit ``slugs`` (warning if a requested one is unknown)
+    plus, when ``from_logs`` is set, every model seen in the proxy logs that
+    exists in the OpenRouter catalog.
+    """
     costmap = find_litellm_costmap()
     backup = costmap.with_suffix(costmap.suffix + ".hh-backup")
     if not backup.exists():
         shutil.copy2(costmap, backup)
         print(f"[register_pricing] backed up cost map -> {backup.name}")
 
-    prices = fetch_openrouter_pricing(slugs)
-    if not prices:
+    catalog = fetch_catalog()
+
+    targets: dict[str, dict] = {}
+    for slug in slugs:  # explicit: warn if not on OpenRouter
+        if slug in catalog:
+            targets[slug] = build_entry(catalog[slug])
+        else:
+            print(f"[register_pricing] WARNING: {slug} not found on OpenRouter")
+    if from_logs:  # discovered: silently keep only real catalog models
+        discovered = [s for s in discover_slugs_from_logs(log_dir)
+                      if s in catalog]
+        for slug in discovered:
+            targets.setdefault(slug, build_entry(catalog[slug]))
+        print(f"[register_pricing] discovered {len(discovered)} model(s) in "
+              f"logs: {', '.join(discovered) or '(none)'}")
+
+    if not targets:
         print("[register_pricing] nothing to register")
         return 1
 
     data = load_json(costmap)
-    for slug, entry in prices.items():
+    for slug, entry in targets.items():
         existing = data.get(slug)
         if existing and existing.get("_source") != MARKER:
             print(f"[register_pricing] skip {slug}: already curated by LiteLLM")
@@ -151,7 +194,7 @@ def cmd_apply(slugs: list[str]) -> int:
         print(f"[register_pricing] registered {slug}  (${ppm:.4f}/M in)")
 
     atomic_write(costmap, data)
-    ok = verify_with_headroom_venv(list(prices.keys()))
+    ok = verify_with_headroom_venv(list(targets.keys()))
     print("[register_pricing] verified in headroom venv"
           if ok else "[register_pricing] WARNING: verification did not confirm")
     return 0 if ok else 2
@@ -180,6 +223,11 @@ def main(argv: list[str] | None = None) -> int:
         description="Register OpenRouter model prices into LiteLLM's cost map.")
     parser.add_argument("--slugs", default=",".join(DEFAULT_SLUGS),
                         help="comma-separated OpenRouter model ids to register")
+    parser.add_argument("--from-logs", action="store_true",
+                        help="also register every model found in the proxy "
+                             "logs (tracks your actual traffic automatically)")
+    parser.add_argument("--log-dir", default=str(DEFAULT_LOG_DIR),
+                        help="proxy log directory to scan with --from-logs")
     parser.add_argument("--restore", action="store_true",
                         help="remove the entries this tool added")
     args = parser.parse_args(argv)
@@ -187,7 +235,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.restore:
         return cmd_restore()
     slugs = [s.strip() for s in args.slugs.split(",") if s.strip()]
-    return cmd_apply(slugs)
+    return cmd_apply(slugs, args.from_logs, Path(args.log_dir))
 
 
 if __name__ == "__main__":
