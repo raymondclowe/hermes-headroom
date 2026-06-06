@@ -5,12 +5,13 @@
 # It does two things, once:
 #   1. installs + starts the Headroom proxy as a `systemd --user` service so it
 #      is always running (just like your hermes-gateway service)
-#   2. permanently points Hermes' config at that proxy (provider + model + the
-#      retrieve MCP tool)
+#   2. sets OPENROUTER_BASE_URL in ~/.hermes/.env — the single global lever that
+#      routes every Hermes process through that proxy
 #
-# After this, EVERYTHING Hermes does — the gateway, Discord, crons, and the
-# plain `hermes` CLI — routes through Headroom automatically. No per-session
-# launcher. Run ./uninstall.sh to fully revert.
+# After this, EVERYTHING Hermes routes via OpenRouter — the gateway, Discord,
+# all profiles, crons, kanban workers, delegated subagents, and the plain
+# `hermes` CLI — flows through Headroom automatically. No per-profile edits, and
+# it survives profile/model changes. Run ./uninstall.sh to fully revert.
 #
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -77,17 +78,56 @@ else
   warn "                          logs:  journalctl --user -u $UNIT_NAME -e"
 fi
 
-# ── 4. Point Hermes' config at the proxy (persistently) ───────────────────────
-info "Pointing Hermes at the proxy (model: ${MODEL}, context: ${CONTEXT_LENGTH})…"
-APPLY_MCP_ARGS=()
-if [[ "$ENABLE_MCP" != "0" ]]; then
-  APPLY_MCP_ARGS=(--with-mcp --proxy-url "$PROXY_BASE" --headroom-bin "$HEADROOM_BIN")
+# ── 4. Route ALL Hermes traffic through the proxy (one global, canonical lever) ─
+# Hermes reads OPENROUTER_BASE_URL from ~/.hermes/.env and applies it to EVERY
+# process that uses the openrouter provider: gateway, all profiles, crons,
+# kanban workers, delegated subagents, and the CLI. No config.yaml/profile edits,
+# survives profile + model changes.  (Ref: Hermes env-vars reference.)
+STATE_DIR="$RUNTIME_DIR/state"
+mkdir -p "$STATE_DIR"
+
+# 4a. If a previous version wired the default config to custom:headroom, undo it
+#     so everything uniformly uses provider: openrouter + the global base-url.
+if [[ -f "$RUNTIME_DIR/model_state.json" ]]; then
+  info "Reverting a previous default-config wiring (migrating to the env lever)…"
+  uv run --quiet --with ruamel.yaml -- python "$SCRIPT_DIR/lib/configure_hermes.py" \
+    --config "$HOME/.hermes/config.yaml" --state-file "$RUNTIME_DIR/model_state.json" \
+    --provider-name "$PROVIDER_NAME" restore || true
+  uv run --quiet --with ruamel.yaml -- python "$SCRIPT_DIR/lib/configure_hermes.py" \
+    --config "$HOME/.hermes/config.yaml" --provider-name "$PROVIDER_NAME" remove || true
 fi
-uv run --quiet --with ruamel.yaml -- \
-  python "$SCRIPT_DIR/lib/configure_hermes.py" \
-  --state-file "$STATE_FILE" --provider-name "$PROVIDER_NAME" \
-  apply --base-url "$BASE_URL" --model "$MODEL" --context-length "$CONTEXT_LENGTH" \
-  "${APPLY_MCP_ARGS[@]}"
+
+# 4b. Set OPENROUTER_BASE_URL in ~/.hermes/.env via an idempotent, removable block.
+#     A pre-existing value (if any) is preserved below our block and restored on
+#     uninstall (ours wins while installed because it is written last).
+ENVFILE="$HOME/.hermes/.env"
+info "Setting OPENROUTER_BASE_URL=${BASE_URL} in ${ENVFILE} …"
+touch "$ENVFILE"; chmod 600 "$ENVFILE"
+tmp="$(mktemp)"
+awk '/# >>> hermes-headroom >>>/{skip=1} /# <<< hermes-headroom <<</{skip=0; next} !skip' \
+  "$ENVFILE" > "$tmp" && mv "$tmp" "$ENVFILE"
+chmod 600 "$ENVFILE"
+{
+  echo "# >>> hermes-headroom >>>"
+  echo "# Route ALL Hermes OpenRouter traffic through the local Headroom proxy."
+  echo "# Remove this block (or run ./uninstall.sh) to disable."
+  echo "OPENROUTER_BASE_URL=${BASE_URL}"
+  echo "# <<< hermes-headroom <<<"
+} >> "$ENVFILE"
+success "Global routing set — every Hermes process now flows through Headroom."
+
+# 4c. (Optional) Add Headroom's MCP retrieve tool to the DEFAULT config only.
+#     MCP servers have no global env lever, so this can't be made profile-wide
+#     without per-profile edits (which we deliberately avoid). Default-only gives
+#     the interactive CLI + default-profile sessions the retrieve tool.
+if [[ "$ENABLE_MCP" != "0" ]]; then
+  info "Adding the Headroom MCP retrieve tool to the default config only…"
+  uv run --quiet --with ruamel.yaml -- python "$SCRIPT_DIR/lib/configure_hermes.py" \
+    --config "$HOME/.hermes/config.yaml" --state-file "$STATE_DIR/mcp-default.json" \
+    --provider-name "$PROVIDER_NAME" \
+    mcp-add --proxy-url "$PROXY_BASE" --headroom-bin "$HEADROOM_BIN" || \
+    warn "Could not add the MCP tool (compression still works without it)."
+fi
 
 # ── 5. Make the gateway wait for the proxy at boot (if a gateway unit exists) ──
 GATEWAY_UNIT="$USER_UNIT_DIR/hermes-gateway.service"
@@ -118,7 +158,7 @@ else
   echo "    (start your gateway however you normally do, e.g. 'hermes gateway start')"
 fi
 echo ""
-info "From now on the gateway, Discord, crons, and the 'hermes' CLI all route"
-info "through the proxy automatically. Check savings any time:  headroom stats"
+info "From now on the gateway, Discord, crons (all profiles), and the 'hermes'"
+info "CLI route through the proxy automatically. See savings:  headroom perf"
 info "To fully revert everything:  ./uninstall.sh"
 echo ""

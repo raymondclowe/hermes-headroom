@@ -190,12 +190,34 @@ def cmd_apply(args: argparse.Namespace) -> int:
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
 
+    # Resolve the model id: use --model, else preserve the config's existing one
+    # (so per-profile models like deepseek-v4-pro are kept, not overwritten).
+    if args.model:
+        model_id = args.model
+    else:
+        model_id = (current_model.get("default") or current_model.get("model")
+                    if isinstance(current_model, dict) else None)
+        if not model_id:
+            print("[configure_hermes] ERROR: no --model given and no existing "
+                  "model.default to preserve", file=sys.stderr)
+            return 2
+
+    # Resolve context length: use --context-length, else preserve existing.
+    # If neither, leave it unset and let Hermes auto-detect from the proxied
+    # /models metadata (safer than forcing a window across mixed models).
+    if args.context_length:
+        ctx_len = int(args.context_length)
+    else:
+        ctx_len = (current_model.get("context_length")
+                   if isinstance(current_model, dict) else None)
+
     # Provider definition + active model selection.
     upsert_provider(cfg, args.provider_name, args.base_url)
     model_block = CommentedMap()
     model_block["provider"] = f"custom:{args.provider_name}"
-    model_block["default"] = args.model
-    model_block["context_length"] = int(args.context_length)
+    model_block["default"] = model_id
+    if ctx_len is not None:
+        model_block["context_length"] = int(ctx_len)
     cfg["model"] = model_block
 
     # Optional MCP server so the agent can retrieve originals on demand.
@@ -208,7 +230,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
     if backup is not None:
         print(f"[configure_hermes] backup: {backup}")
     print(f"[configure_hermes] active model -> "
-          f"custom:{args.provider_name} / {args.model}")
+          f"custom:{args.provider_name} / {model_id}")
     if args.with_mcp:
         print(f"[configure_hermes] MCP server '{args.provider_name}' wired "
               f"(headroom_retrieve, headroom_stats)")
@@ -267,6 +289,39 @@ def cmd_remove(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mcp_add(args: argparse.Namespace) -> int:
+    """Add only the Headroom MCP server (retrieve tool); never touch the model.
+
+    Used for the global-env approach, where routing is handled by
+    OPENROUTER_BASE_URL and the only per-config change is this optional tool.
+    """
+    cfg_path = Path(args.config).expanduser()
+    cfg = load_config(cfg_path)
+    backup = backup_config(cfg_path)
+
+    mcp_args = ["mcp", "serve", "--proxy-url", args.proxy_url]
+    upsert_mcp(cfg, args.provider_name, args.headroom_bin, mcp_args,
+               ["headroom_retrieve", "headroom_stats"])
+    save_config(cfg_path, cfg)
+    if backup is not None:
+        print(f"[configure_hermes] backup: {backup}")
+    print(f"[configure_hermes] MCP server '{args.provider_name}' added "
+          f"(headroom_retrieve, headroom_stats)")
+    return 0
+
+
+def cmd_mcp_remove(args: argparse.Namespace) -> int:
+    """Remove only the Headroom MCP server entry; leave the model untouched."""
+    cfg_path = Path(args.config).expanduser()
+    cfg = load_config(cfg_path)
+    if remove_mcp(cfg, args.provider_name):
+        save_config(cfg_path, cfg)
+        print(f"[configure_hermes] removed MCP server '{args.provider_name}'")
+    else:
+        print("[configure_hermes] no MCP entry to remove")
+    return 0
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
@@ -282,8 +337,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_apply = sub.add_parser("apply", help="point Hermes at the Headroom proxy")
     p_apply.add_argument("--base-url", required=True)
-    p_apply.add_argument("--model", required=True)
-    p_apply.add_argument("--context-length", default="128000")
+    p_apply.add_argument("--model", default=None,
+                         help="model id to set; if omitted, preserve the "
+                              "config's existing model.default")
+    p_apply.add_argument("--context-length", default=None,
+                         help="context window to set; if omitted, preserve "
+                              "existing or let Hermes auto-detect")
     p_apply.add_argument("--with-mcp", action="store_true",
                          help="also register Headroom's MCP server")
     p_apply.add_argument("--proxy-url", default="http://127.0.0.1:8787",
@@ -296,6 +355,18 @@ def build_parser() -> argparse.ArgumentParser:
                    ).set_defaults(func=cmd_restore)
     sub.add_parser("remove", help="delete the headroom provider + MCP entry"
                    ).set_defaults(func=cmd_remove)
+
+    p_mcp_add = sub.add_parser("mcp-add",
+                               help="add ONLY the Headroom MCP retrieve tool "
+                                    "(does not touch the model block)")
+    p_mcp_add.add_argument("--proxy-url", default="http://127.0.0.1:8787",
+                           help="proxy base URL the MCP server connects to")
+    p_mcp_add.add_argument("--headroom-bin", default="headroom",
+                           help="path to the headroom executable for MCP stdio")
+    p_mcp_add.set_defaults(func=cmd_mcp_add)
+
+    sub.add_parser("mcp-remove", help="remove ONLY the Headroom MCP entry"
+                   ).set_defaults(func=cmd_mcp_remove)
     return parser
 
 

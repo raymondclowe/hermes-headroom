@@ -11,15 +11,18 @@ This is **not** a per-session launcher. It wires Headroom in once, so the
 all route through it automatically:
 
 ```
-Hermes gateway / Discord / crons / CLI
-        │  (reads ~/.hermes/config.yaml)
+Hermes gateway / Discord / all profiles / crons / kanban / subagents / CLI
+        │  (every process reads OPENROUTER_BASE_URL from ~/.hermes/.env)
         ▼
 Headroom proxy  ──►  OpenRouter  ──►  the model
 (systemd --user service, always on; compresses + caches)
 ```
 
-It works because `~/.hermes/config.yaml` is Hermes' single source of truth for the
-model/provider — point it at the local proxy once and the whole agent uses it.
+It works because Hermes reads **`OPENROUTER_BASE_URL`** from `~/.hermes/.env` and
+applies it to *every* process that uses the `openrouter` provider. Setting that one
+variable to the local proxy routes the gateway, all profiles, crons, kanban workers,
+delegated subagents, and the CLI through Headroom at once — no `config.yaml` or
+per-profile edits, and it survives profile/model changes.
 
 ---
 
@@ -49,7 +52,7 @@ That's it. Nothing to launch per session. Verify it's working:
 
 ```bash
 systemctl --user status headroom-proxy.service   # proxy is active
-headroom stats                                    # tokens / cost saved
+headroom perf                                     # tokens / cost saved (last 7 days)
 ```
 
 To change the model or port later, edit `.env` and re-run `./install.sh`.
@@ -63,16 +66,34 @@ To remove everything, `./uninstall.sh`.
    `headroom proxy --backend openrouter` on `127.0.0.1:<PORT>`, enabled so it
    starts on login and auto-restarts on failure. Your `.env` is the service's
    `EnvironmentFile`, so the OpenRouter key lives there and nowhere else.
-2. **`~/.hermes/config.yaml`** (a timestamped backup is made first):
-   - a `headroom` entry under `custom_providers` pointing at the proxy,
-   - `model.provider: custom:headroom`, `model.default: <MODEL>`, `model.context_length`,
-   - (if `ENABLE_MCP=1`) a `headroom` entry under `mcp_servers` for the retrieve tool.
-3. **A boot-ordering drop-in** at
+   (This `.env` deliberately does **not** set `OPENROUTER_BASE_URL`, so the proxy
+   itself still targets real OpenRouter — no loop.)
+2. **`~/.hermes/.env`** — a small, clearly-marked, removable block that sets
+   `OPENROUTER_BASE_URL=http://127.0.0.1:<PORT>/v1`. This is the global lever:
+   every Hermes process using the `openrouter` provider now flows through the
+   proxy. No `config.yaml` or per-profile edits; survives profile/model changes.
+   Any pre-existing `OPENROUTER_BASE_URL` is preserved and restored on uninstall.
+3. **(Optional, `ENABLE_MCP=1`) the default `~/.hermes/config.yaml`** gets a
+   `headroom` entry under `mcp_servers` for the retrieve tool (timestamped backup
+   first). MCP servers have no global env lever, so this is added to the **default
+   config only** — it is the one thing that can't be made profile-wide without
+   per-profile edits, which we deliberately avoid. Compression works fully without it.
+4. **A boot-ordering drop-in** at
    `~/.config/systemd/user/hermes-gateway.service.d/10-headroom.conf` so the
    gateway starts *after* the proxy. This is a separate file — it does not modify
    the unit Hermes generates, and survives `hermes gateway` regenerating it.
 
-`uninstall.sh` reverses all three and restores your previous model selection.
+`uninstall.sh` reverses all of the above (and cleans up any legacy wiring from
+earlier versions).
+
+### What this does *not* catch
+
+`OPENROUTER_BASE_URL` only wraps traffic Hermes routes **through OpenRouter**. When
+Hermes shells out to **Codex** or **Claude Code** as subagents, those CLIs call
+Anthropic/OpenAI on their own endpoints, so they bypass this proxy. To compress
+those too, run a second Headroom proxy with `--backend anthropic` (or `openai`) and
+point `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` at it, or use `headroom wrap codex` /
+`headroom wrap claude`. That's a separate, additive setup.
 
 ---
 
