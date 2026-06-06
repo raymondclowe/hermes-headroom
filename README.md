@@ -163,10 +163,24 @@ If your gateway already survives reboots, the proxy will too.
   exact slug from openrouter.ai/models, then re-run `./install.sh`.
 - **Want the original config back?** Each `install.sh` leaves a timestamped backup:
   `~/.hermes/config.yaml.bak-pre-headroom-*`.
-- **Provider routing.** Hermes talks to Headroom as a plain OpenAI-compatible
-  endpoint, so Hermes' own `:nitro`/`:floor`/`provider_routing` don't apply; add an
-  `extra_body` block to the `headroom` provider entry if you need it, or route on
-  the OpenRouter side.
+- **`headroom perf` shows "list price unknown" / no $ savings.** The model is
+  newer than LiteLLM's price database (true today for `deepseek-v4-*`).
+  `install.sh` fixes this by registering live OpenRouter prices into LiteLLM's
+  *local* cost map (`lib/register_pricing.py`) and setting
+  `LITELLM_LOCAL_MODEL_COST_MAP=true`. Re-run `./install.sh` (or
+  `python3 lib/register_pricing.py --slugs <your/model>`) after
+  `uv tool upgrade headroom-ai`, or for any other new model. The `perf` CLI must
+  see the flag too, so run it as `LITELLM_LOCAL_MODEL_COST_MAP=true headroom perf`
+  — or add `export LITELLM_LOCAL_MODEL_COST_MAP=true` to your shell rc so plain
+  `headroom perf` works. (`fish`: `set -Ux LITELLM_LOCAL_MODEL_COST_MAP true`.)
+- **token vs cache mode.** `HEADROOM_MODE=token` (default) maximizes token
+  reduction but rewrites prior turns, which churns provider prefix-cache early in
+  a conversation. `HEADROOM_MODE=cache` freezes prior turns to preserve cache
+  hits — usually cheaper only for models with steep cache discounts (e.g.
+  deepseek-v4-**pro**, whose cache reads are ~120× cheaper than fresh input). For
+  flash-dominant traffic, token mode is typically the better bill. Switch in
+  `.env`, restart the proxy, and compare `headroom perf`.
+
 
 ---
 

@@ -79,6 +79,10 @@ if command -v uv >/dev/null 2>&1; then
   shopt -u nullglob
 fi
 
+# 2c. Remove the deepseek-v4 price entries we added to LiteLLM's cost map.
+info "Removing registered model prices from LiteLLM's cost map (if present)…"
+python3 "$SCRIPT_DIR/lib/register_pricing.py" --restore || true
+
 echo ""
 success "Reverted. Restart your gateway so it drops the proxy:  hermes gateway restart"
 echo ""

@@ -129,6 +129,15 @@ if [[ "$ENABLE_MCP" != "0" ]]; then
     warn "Could not add the MCP tool (compression still works without it)."
 fi
 
+# 4d. Register live OpenRouter prices for brand-new models (e.g. deepseek-v4-*)
+#     into LiteLLM's local cost map so `headroom perf` shows $ savings. Paired
+#     with LITELLM_LOCAL_MODEL_COST_MAP=true in .env. Safe + idempotent; re-run
+#     after `uv tool upgrade headroom-ai`.
+info "Registering current OpenRouter prices into LiteLLM (for perf \$ display)…"
+python3 "$SCRIPT_DIR/lib/register_pricing.py" \
+  --slugs "deepseek/deepseek-v4-flash,deepseek/deepseek-v4-pro,${MODEL}" || \
+  warn "Price registration skipped (compression unaffected; perf \$ may read 'unknown')."
+
 # ── 5. Make the gateway wait for the proxy at boot (if a gateway unit exists) ──
 GATEWAY_UNIT="$USER_UNIT_DIR/hermes-gateway.service"
 if [[ -f "$GATEWAY_UNIT" ]]; then
