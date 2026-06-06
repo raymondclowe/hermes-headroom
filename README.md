@@ -168,6 +168,13 @@ Hermes model calls fail** (gateway included). Two things mitigate this:
 
 If linger isn't enabled for your user, the proxy (and gateway) won't survive a full
 logout/reboot. The Hermes gateway docs cover this — `loginctl enable-linger $USER`.
+Check if set with
+
+```bash
+loginctl show-user $USER | grep Linger
+ls /var/lib/systemd/linger/
+```
+
 If your gateway already survives reboots, the proxy will too.
 
 ---
