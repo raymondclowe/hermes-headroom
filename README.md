@@ -201,6 +201,32 @@ If your gateway already survives reboots, the proxy will too.
   see the flag too, so run it as `LITELLM_LOCAL_MODEL_COST_MAP=true headroom perf`
   — or add `export LITELLM_LOCAL_MODEL_COST_MAP=true` to your shell rc so plain
   `headroom perf` works. (`fish`: `set -Ux LITELLM_LOCAL_MODEL_COST_MAP true`.)
+- **Model context limits (important).** Headroom's OpenAI-compatible provider
+  resolves context windows by name pattern and falls back to **128K** for
+  unrecognized models — which includes `deepseek/deepseek-v4-*` and
+  `minimax/minimax-m3` (really ~1M). Left unfixed, the proxy trims/compresses
+  long conversations against a 128K ceiling that doesn't exist. `register_pricing.py
+  --from-logs` (run by `install.sh`) writes the real windows into
+  `~/.headroom/models.json`, so the proxy only trims near the true limit.
+  Trade-off: on very long conversations you'll see **lower headline token
+  savings** (it stops over-trimming) but **higher fidelity** — per-item bloat
+  compression still runs regardless. If you'd rather trim aggressively for
+  cost/focus, set a deliberate lower number by hand in `~/.headroom/models.json`
+  (e.g. 256000) — now it's an intentional choice, not an accident.
+- **What model does Headroom run?** Essentially none. Compression is
+  structural/statistical (SmartCrusher JSON, AST code-aware, BM25 relevance,
+  CacheAligner, RollingWindow). The only ML model is `answerdotai/ModernBERT-base`
+  (~150M params) used lazily by the optional `kompress` transform, on CPU via
+  ONNX by default. There is **no** 8–12B LLM requirement; LLMLingua (which would
+  use a model) isn't in the 0.23.x build. Your GPU is not needed for Headroom.
+- **OpenRouter + caching.** The cache-optimization docs cover Anthropic/OpenAI/
+  Google but not OpenRouter — that's fine: CacheAligner (prefix stabilization)
+  is provider-agnostic, and DeepSeek/MiniMax do *automatic* prefix caching with
+  no special markers, so you get the benefit (your hit rate is ~86%). Headroom
+  can't insert Anthropic-style `cache_control` through an OpenRouter→Anthropic
+  route, but your models don't need it.
+- **Privacy.** `HEADROOM_TELEMETRY=off` in `.env` disables anonymous usage
+  telemetry (on by default upstream).
 - **token vs cache mode.** `HEADROOM_MODE=token` (default) maximizes token
   reduction but rewrites prior turns, which churns provider prefix-cache early in
   a conversation. `HEADROOM_MODE=cache` freezes prior turns to preserve cache

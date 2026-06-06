@@ -36,6 +36,11 @@ MARKER = "hermes-headroom"  # tags entries we own, for clean removal
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 DEFAULT_SLUGS = ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"]
 DEFAULT_LOG_DIR = Path.home() / ".headroom" / "logs"
+# Headroom's native per-model context/pricing registry (read by the OpenAI-
+# compatible provider the OpenRouter backend uses). LiteLLM fixes `perf` $
+# display, but the *context limit* the proxy uses for trimming comes from here —
+# unknown models otherwise fall back to a wrong 128K default.
+MODELS_JSON = Path.home() / ".headroom" / "models.json"
 
 
 def find_litellm_costmap() -> Path:
@@ -197,6 +202,8 @@ def cmd_apply(slugs: list[str], from_logs: bool, log_dir: Path) -> int:
     ok = verify_with_headroom_venv(list(targets.keys()))
     print("[register_pricing] verified in headroom venv"
           if ok else "[register_pricing] WARNING: verification did not confirm")
+    # Also set native context limits so the proxy stops assuming a 128K window.
+    update_models_json(list(targets.keys()), catalog)
     return 0 if ok else 2
 
 
@@ -214,7 +221,89 @@ def cmd_restore() -> int:
               f"{', '.join(removed)}")
     else:
         print("[register_pricing] no hermes-headroom entries to remove")
+    restore_models_json()
     return 0
+
+
+def update_models_json(slugs: list[str], catalog: dict[str, dict]) -> None:
+    """Write context limits (+ pricing) for `slugs` into ~/.headroom/models.json.
+
+    Uses the OpenAI-compatible provider's ``openai`` section (the OpenRouter
+    backend's provider type). Tracks which keys we added under a private marker
+    so ``restore`` removes only ours and never the user's own entries.
+    """
+    if not slugs:
+        return
+    data: dict = {}
+    if MODELS_JSON.exists():
+        try:
+            data = json.loads(MODELS_JSON.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+
+    section = data.setdefault("openai", {})
+    ctx_limits = section.setdefault("context_limits", {})
+    pricing = section.setdefault("pricing", {})
+    managed = set(data.setdefault(f"_{MARKER}", {}).setdefault("managed", []))
+
+    written = 0
+    for slug in slugs:
+        m = catalog.get(slug)
+        if not m:
+            continue
+        ctx = int(m.get("context_length") or 0)
+        if not ctx:
+            continue
+        # only manage keys we created; never clobber user-defined ones
+        if slug in ctx_limits and slug not in managed:
+            continue
+        ctx_limits[slug] = ctx
+        p = m.get("pricing", {})
+        pricing[slug] = {  # per-million USD, matching models.json schema
+            "input": round(float(p.get("prompt", 0) or 0) * 1_000_000, 6),
+            "output": round(float(p.get("completion", 0) or 0) * 1_000_000, 6),
+            "cached_input": round(
+                float(p.get("input_cache_read", 0) or 0) * 1_000_000, 6),
+        }
+        managed.add(slug)
+        written += 1
+
+    data[f"_{MARKER}"]["managed"] = sorted(managed)
+    MODELS_JSON.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w", dir=str(MODELS_JSON.parent), delete=False, encoding="utf-8") as tmp:
+        json.dump(data, tmp, indent=2)
+        tmp_path = Path(tmp.name)
+    json.loads(tmp_path.read_text(encoding="utf-8"))  # validate
+    tmp_path.replace(MODELS_JSON)
+    print(f"[register_pricing] models.json: set context limits for {written} "
+          f"model(s) (fixes the 128K fallback)")
+
+
+def restore_models_json() -> None:
+    """Remove only the context/pricing entries we added to models.json."""
+    if not MODELS_JSON.exists():
+        return
+    try:
+        data = json.loads(MODELS_JSON.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    managed = data.get(f"_{MARKER}", {}).get("managed", [])
+    if not managed:
+        return
+    section = data.get("openai", {})
+    for slug in managed:
+        section.get("context_limits", {}).pop(slug, None)
+        section.get("pricing", {}).pop(slug, None)
+    data.pop(f"_{MARKER}", None)
+    # If our section is now empty, drop it; if the whole file is now empty, remove it.
+    if not section.get("context_limits") and not section.get("pricing"):
+        data.pop("openai", None)
+    if data:
+        MODELS_JSON.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    else:
+        MODELS_JSON.unlink()
+    print(f"[register_pricing] models.json: removed {len(managed)} entry(ies)")
 
 
 def main(argv: list[str] | None = None) -> int:
