@@ -52,7 +52,28 @@ That's it. Nothing to launch per session. Verify it's working:
 
 ```bash
 systemctl --user status headroom-proxy.service   # proxy is active
-headroom perf                                     # tokens / cost saved (last 7 days)
+headroom perf --hours 24 # tokens / cost saved (last 24 hours) No flag for last 7 days.
+```
+
+Either run LITELLM_LOCAL_MODEL_COST_MAP=true headroom perf, or set it once so plain headroom perf works:
+
+
+fish:
+
+```bash
+set -Ux LITELLM_LOCAL_MODEL_COST_MAP true
+```
+
+bash/zsh:
+
+```bash
+echo 'export LITELLM_LOCAL_MODEL_COST_MAP=true' >> ~/.bashrc
+```
+
+To restart the proxy, run:
+
+```
+systemctl --user restart headroom-proxy.service
 ```
 
 To change the model or port later, edit `.env` and re-run `./install.sh`.
