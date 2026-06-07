@@ -134,7 +134,53 @@ Put any OpenRouter slug in `.env` as `MODEL=`, exactly as shown on
 | `PORT` | Local port for the proxy (default `8787`). |
 | `CONTEXT_LENGTH` | Context window in tokens Hermes should assume. |
 | `ENABLE_MCP` | `1` wires Headroom's retrieve/stats MCP tools into Hermes; `0` skips. |
-| `HEADROOM_EXTRA_ARGS` | Reserved for advanced proxy flags (not used by the service unit). |
+| `HEADROOM_EXTRA_ARGS` | Proxy flags; includes `--memory --memory-storage=user` by default. |
+
+---
+
+## Persistent memory / SharedContext
+
+With `--memory` in `HEADROOM_EXTRA_ARGS` (default), the proxy automatically extracts
+important facts from conversations and injects relevant compressed memories into future
+requests. This is Headroom's proxy-level inter-agent context sharing:
+
+- **Agent A** discovers something in conversation → the proxy remembers it
+- **Agent B** starts a new session → the proxy injects relevant compressed memories
+  (~80% smaller) as context automatically
+- **No code changes** to Hermes needed — it works at the HTTP transport layer
+
+This is the transport-level equivalent of Headroom's `SharedContext` Python API
+(`from headroom import SharedContext`). The library API is for in-process agent code;
+the `--memory` flag does the same thing for agents that talk through the proxy.
+
+### Memory storage modes
+
+| Mode | Flag | Behavior |
+| --- | --- | --- |
+| `project` (default) | `--memory-storage=project` | One SQLite DB per project/workspace — no cross-project bleed. |
+| `user` (recommended) | `--memory-storage=user` | Single DB for all traffic — all Hermes conversations share memories. |
+| `global` | `--memory-storage=global` | Legacy single shared DB. |
+
+We default to `user` because all Hermes traffic flows through one proxy and you want
+context shared across gateway, crons, subagents, and the CLI.
+
+### Managing memories
+
+```bash
+headroom memory list                     # List stored memories
+headroom memory stats                    # Show memory statistics
+headroom memory show <id>                # Full details of a memory
+headroom memory prune --older-than 30d   # Prune old memories
+headroom memory export --output file.json  # Export for backup
+```
+
+### Optional: traffic learning (`--learn`)
+
+Add `--learn` to `HEADROOM_EXTRA_ARGS` for deeper inter-agent intelligence:
+the proxy watches traffic for error→recovery patterns, environment facts, and user
+preferences, then saves them to agent-native memory files (`MEMORY.md`, `.cursor/rules`,
+`AGENTS.md`). Implies `--memory`. More powerful but more opinionated — start with
+just `--memory` and graduate to `--learn` after you're comfortable.
 
 ---
 

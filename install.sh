@@ -129,6 +129,20 @@ if [[ "$ENABLE_MCP" != "0" ]]; then
     warn "Could not add the MCP tool (compression still works without it)."
 fi
 
+# 4c½. Persistent memory / SharedContext — report on memory configuration.
+#      The --memory flag is passed via HEADROOM_EXTRA_ARGS (set in .env), so it
+#      is already part of the service's ExecStart. We just ensure the default
+#      memory storage directory exists and let the user know it's active.
+if echo "${HEADROOM_EXTRA_ARGS:-}" | grep -q -- '--memory'; then
+  MEMORY_DIR="$HOME/.headroom/memories"
+  mkdir -p "$MEMORY_DIR"
+  success "Persistent memory enabled (inter-agent context sharing via --memory)."
+  info "  Memory DB directory: $MEMORY_DIR"
+  info "  Manage memories:     headroom memory list | stats | prune"
+else
+  info "Persistent memory is disabled. To enable, add --memory to HEADROOM_EXTRA_ARGS in .env."
+fi
+
 # 4d. Register live OpenRouter prices for brand-new models (e.g. deepseek-v4-*)
 #     into LiteLLM's local cost map so `headroom perf` shows $ savings. Paired
 #     with LITELLM_LOCAL_MODEL_COST_MAP=true in .env. Safe + idempotent; re-run

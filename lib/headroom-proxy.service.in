@@ -8,6 +8,7 @@ Wants=network-online.target
 Type=simple
 # OPENROUTER_API_KEY (and the rest of the project's .env) is loaded from here.
 # HEADROOM_MODE (token|cache) is also read from here natively by the proxy.
+# HEADROOM_EXTRA_ARGS carries --memory / --learn flags for persistent context.
 EnvironmentFile=__ENVFILE__
 ExecStart=__HEADROOM_BIN__ proxy --backend openrouter --host 127.0.0.1 --port __PORT__ $HEADROOM_EXTRA_ARGS
 Restart=always

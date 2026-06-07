@@ -6,3 +6,6 @@
 .venv/
 __pycache__/
 *.pyc
+
+# Headroom
+headroom_memory.db
