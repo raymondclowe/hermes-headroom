@@ -1,6 +1,11 @@
 #!/home/ty/.local/share/uv/tools/headroom-ai/bin/python
 # -*- coding: utf-8 -*-
-"""Wrapper script to monkeypatch Headroom proxy and MCP server without modifying the stock package."""
+"""Wrapper script to monkeypatch Headroom proxy and MCP server
+ without modifying the stock package.
+"""
+
+# pylint: disable=import-error, protected-access, broad-exception-caught
+# pylint: disable=import-outside-toplevel
 
 import os
 import sys
@@ -11,19 +16,26 @@ try:
     custom_ttl = int(os.environ.get("HEADROOM_CCR_TTL", "3600"))
 
     # Import headroom modules
-    import headroom.cache.compression_store as cs
-    import headroom.config as hc
-    import headroom.ccr.mcp_server as ms
+    import headroom.cache.compression_store as cs  # type: ignore
+    import headroom.config as hc  # type: ignore
+    import headroom.ccr.mcp_server as ms  # type: ignore
 
     # Patch get_compression_store default argument
     orig_get_compression_store = cs.get_compression_store
-    def patched_get_compression_store(max_entries=1000, default_ttl=custom_ttl, backend=None):
-        return orig_get_compression_store(max_entries=max_entries, default_ttl=default_ttl, backend=backend)
+
+    def patched_get_compression_store(
+        max_entries=1000, default_ttl=custom_ttl, backend=None
+    ):
+        """Patched version of get_compression_store to override the default TTL."""
+        return orig_get_compression_store(
+            max_entries=max_entries, default_ttl=default_ttl, backend=backend
+        )
+
     cs.get_compression_store = patched_get_compression_store
 
     # Patch CompressionEntry field default
     if hasattr(cs, "CompressionEntry"):
-        cs.CompressionEntry.__dataclass_fields__['ttl'].default = custom_ttl
+        cs.CompressionEntry.__dataclass_fields__["ttl"].default = custom_ttl
 
     # Patch CCRConfig default
     if hasattr(hc, "CCRConfig"):
@@ -31,7 +43,8 @@ try:
 
     # Patch MCP Retrieve handler to output raw strings on success and clean strings on error
     async def patched_handle_retrieve(self, arguments: dict) -> list:
-        from mcp.types import TextContent
+        """Patched handler for the retrieval tool to prevent raw JSON responses."""
+        from mcp.types import TextContent  # type: ignore
         import json
 
         hash_key = arguments.get("hash")
@@ -56,13 +69,20 @@ try:
     if hasattr(ms, "HeadroomMCPServer"):
         ms.HeadroomMCPServer._handle_retrieve = patched_handle_retrieve
 
-    print(f"[headroom-wrapper] Patched Headroom default TTL to {custom_ttl}s and MCP retrieve output format", file=sys.stderr)
+    print(
+        f"[headroom-wrapper] Patched Headroom default TTL to {custom_ttl}s "
+        "and MCP retrieve output format",
+        file=sys.stderr,
+    )
 
 except Exception as e:
-    print(f"[headroom-wrapper] Warning: Failed to apply monkeypatches: {e}", file=sys.stderr)
+    print(
+        f"[headroom-wrapper] Warning: Failed to apply monkeypatches: {e}",
+        file=sys.stderr,
+    )
 
 # 2. Delegate to the original headroom entry point
-from headroom.cli import main
+from headroom.cli import main  # type: ignore
 
 if __name__ == "__main__":
     # If sys.argv[0] is this script, Click might show the script name in help, which is fine
