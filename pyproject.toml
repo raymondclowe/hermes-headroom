@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "ruamel.yaml>=0.18",
+    "headroom-ai[proxy,mcp]",
 ]
 
 # This repo is a set of scripts, not an installable package — tell uv not to

@@ -50,20 +50,28 @@ def find_litellm_costmap() -> Path:
         raise SystemExit("[register_pricing] 'headroom' not on PATH")
     venv_root = Path(hb).resolve().parents[1]  # .../bin/headroom -> venv root
     matches = glob.glob(
-        str(venv_root / "lib" / "python*" / "site-packages" / "litellm"
-            / "model_prices_and_context_window_backup.json")
+        str(
+            venv_root
+            / "lib"
+            / "python*"
+            / "site-packages"
+            / "litellm"
+            / "model_prices_and_context_window_backup.json"
+        )
     )
     if not matches:
         raise SystemExit(
-            "[register_pricing] could not find LiteLLM cost map under "
-            f"{venv_root}")
+            "[register_pricing] could not find LiteLLM cost map under " f"{venv_root}"
+        )
     return Path(matches[0])
 
 
 def fetch_catalog() -> dict[str, dict]:
     """Fetch the OpenRouter model catalog as a {slug: model_obj} mapping."""
     req = urllib.request.Request(
-        OPENROUTER_MODELS_URL, headers={"User-Agent": "hermes-headroom"})
+        OPENROUTER_MODELS_URL, headers={"User-Agent": "hermes-headroom"}
+    )
+    # trunk-ignore(bandit/B310)
     with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
         catalog = json.loads(resp.read().decode("utf-8")).get("data", [])
     return {m.get("id"): m for m in catalog if m.get("id")}
@@ -130,7 +138,8 @@ def load_json(path: Path) -> dict:
 def atomic_write(path: Path, data: dict) -> None:
     """Write JSON atomically so a crash can never leave a half-written map."""
     with tempfile.NamedTemporaryFile(
-        "w", dir=str(path.parent), delete=False, encoding="utf-8") as tmp:
+        "w", dir=str(path.parent), delete=False, encoding="utf-8"
+    ) as tmp:
         json.dump(data, tmp, indent=4)
         tmp_path = Path(tmp.name)
     json.loads(tmp_path.read_text(encoding="utf-8"))  # validate before swap
@@ -147,8 +156,14 @@ def verify_with_headroom_venv(slugs: list[str]) -> bool:
         f"print(json.dumps({{s: (s in mc) for s in {slugs!r}}}))"
     )
     try:
-        res = subprocess.run([str(py), "-c", code], capture_output=True,
-                             text=True, timeout=60, check=True)
+        # trunk-ignore(bandit/B603)
+        res = subprocess.run(
+            [str(py), "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
+        )
         return all(json.loads(res.stdout.strip()).values())
     except Exception as exc:  # noqa: BLE001
         print(f"[register_pricing] verify failed: {exc}")
@@ -177,12 +192,13 @@ def cmd_apply(slugs: list[str], from_logs: bool, log_dir: Path) -> int:
         else:
             print(f"[register_pricing] WARNING: {slug} not found on OpenRouter")
     if from_logs:  # discovered: silently keep only real catalog models
-        discovered = [s for s in discover_slugs_from_logs(log_dir)
-                      if s in catalog]
+        discovered = [s for s in discover_slugs_from_logs(log_dir) if s in catalog]
         for slug in discovered:
             targets.setdefault(slug, build_entry(catalog[slug]))
-        print(f"[register_pricing] discovered {len(discovered)} model(s) in "
-              f"logs: {', '.join(discovered) or '(none)'}")
+        print(
+            f"[register_pricing] discovered {len(discovered)} model(s) in "
+            f"logs: {', '.join(discovered) or '(none)'}"
+        )
 
     if not targets:
         print("[register_pricing] nothing to register")
@@ -200,8 +216,11 @@ def cmd_apply(slugs: list[str], from_logs: bool, log_dir: Path) -> int:
 
     atomic_write(costmap, data)
     ok = verify_with_headroom_venv(list(targets.keys()))
-    print("[register_pricing] verified in headroom venv"
-          if ok else "[register_pricing] WARNING: verification did not confirm")
+    print(
+        "[register_pricing] verified in headroom venv"
+        if ok
+        else "[register_pricing] WARNING: verification did not confirm"
+    )
     # Also set native context limits so the proxy stops assuming a 128K window.
     update_models_json(list(targets.keys()), catalog)
     return 0 if ok else 2
@@ -211,14 +230,19 @@ def cmd_restore() -> int:
     """Remove only the entries we added (identified by their marker)."""
     costmap = find_litellm_costmap()
     data = load_json(costmap)
-    removed = [k for k, v in list(data.items())
-               if isinstance(v, dict) and v.get("_source") == MARKER]
+    removed = [
+        k
+        for k, v in list(data.items())
+        if isinstance(v, dict) and v.get("_source") == MARKER
+    ]
     for k in removed:
         del data[k]
     if removed:
         atomic_write(costmap, data)
-        print(f"[register_pricing] removed {len(removed)} entry(ies): "
-              f"{', '.join(removed)}")
+        print(
+            f"[register_pricing] removed {len(removed)} entry(ies): "
+            f"{', '.join(removed)}"
+        )
     else:
         print("[register_pricing] no hermes-headroom entries to remove")
     restore_models_json()
@@ -263,7 +287,8 @@ def update_models_json(slugs: list[str], catalog: dict[str, dict]) -> None:
             "input": round(float(p.get("prompt", 0) or 0) * 1_000_000, 6),
             "output": round(float(p.get("completion", 0) or 0) * 1_000_000, 6),
             "cached_input": round(
-                float(p.get("input_cache_read", 0) or 0) * 1_000_000, 6),
+                float(p.get("input_cache_read", 0) or 0) * 1_000_000, 6
+            ),
         }
         managed.add(slug)
         written += 1
@@ -271,13 +296,16 @@ def update_models_json(slugs: list[str], catalog: dict[str, dict]) -> None:
     data[f"_{MARKER}"]["managed"] = sorted(managed)
     MODELS_JSON.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
-        "w", dir=str(MODELS_JSON.parent), delete=False, encoding="utf-8") as tmp:
+        "w", dir=str(MODELS_JSON.parent), delete=False, encoding="utf-8"
+    ) as tmp:
         json.dump(data, tmp, indent=2)
         tmp_path = Path(tmp.name)
     json.loads(tmp_path.read_text(encoding="utf-8"))  # validate
     tmp_path.replace(MODELS_JSON)
-    print(f"[register_pricing] models.json: set context limits for {written} "
-          f"model(s) (fixes the 128K fallback)")
+    print(
+        f"[register_pricing] models.json: set context limits for {written} "
+        f"model(s) (fixes the 128K fallback)"
+    )
 
 
 def restore_models_json() -> None:
@@ -309,16 +337,27 @@ def restore_models_json() -> None:
 def main(argv: list[str] | None = None) -> int:
     """Parse arguments and dispatch apply/restore."""
     parser = argparse.ArgumentParser(
-        description="Register OpenRouter model prices into LiteLLM's cost map.")
-    parser.add_argument("--slugs", default=",".join(DEFAULT_SLUGS),
-                        help="comma-separated OpenRouter model ids to register")
-    parser.add_argument("--from-logs", action="store_true",
-                        help="also register every model found in the proxy "
-                             "logs (tracks your actual traffic automatically)")
-    parser.add_argument("--log-dir", default=str(DEFAULT_LOG_DIR),
-                        help="proxy log directory to scan with --from-logs")
-    parser.add_argument("--restore", action="store_true",
-                        help="remove the entries this tool added")
+        description="Register OpenRouter model prices into LiteLLM's cost map."
+    )
+    parser.add_argument(
+        "--slugs",
+        default=",".join(DEFAULT_SLUGS),
+        help="comma-separated OpenRouter model ids to register",
+    )
+    parser.add_argument(
+        "--from-logs",
+        action="store_true",
+        help="also register every model found in the proxy "
+        "logs (tracks your actual traffic automatically)",
+    )
+    parser.add_argument(
+        "--log-dir",
+        default=str(DEFAULT_LOG_DIR),
+        help="proxy log directory to scan with --from-logs",
+    )
+    parser.add_argument(
+        "--restore", action="store_true", help="remove the entries this tool added"
+    )
     args = parser.parse_args(argv)
 
     if args.restore:

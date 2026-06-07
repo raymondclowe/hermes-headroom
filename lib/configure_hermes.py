@@ -73,6 +73,7 @@ def backup_config(path: Path) -> Path | None:
 
 # ── custom_providers helpers ──────────────────────────────────────────────────
 
+
 def get_providers(cfg: CommentedMap) -> CommentedSeq:
     """Return the ``custom_providers`` list, creating it if missing."""
     providers = cfg.get("custom_providers")
@@ -104,8 +105,7 @@ def remove_provider(cfg: CommentedMap, name: str) -> bool:
     providers = cfg.get("custom_providers")
     if not isinstance(providers, list):
         return False
-    keep = [e for e in providers
-            if not (isinstance(e, dict) and e.get("name") == name)]
+    keep = [e for e in providers if not (isinstance(e, dict) and e.get("name") == name)]
     if len(keep) == len(providers):
         return False
     new_seq = CommentedSeq()
@@ -119,6 +119,7 @@ def remove_provider(cfg: CommentedMap, name: str) -> bool:
 
 # ── mcp_servers helpers ───────────────────────────────────────────────────────
 
+
 def get_mcp_servers(cfg: CommentedMap) -> CommentedMap:
     """Return the ``mcp_servers`` mapping, creating it if missing."""
     servers = cfg.get("mcp_servers")
@@ -128,8 +129,13 @@ def get_mcp_servers(cfg: CommentedMap) -> CommentedMap:
     return servers
 
 
-def upsert_mcp(cfg: CommentedMap, name: str, command: str,
-               args: list[str], include_tools: list[str]) -> None:
+def upsert_mcp(
+    cfg: CommentedMap,
+    name: str,
+    command: str,
+    args: list[str],
+    include_tools: list[str],
+) -> None:
     """Add or replace the Headroom MCP server entry (stdio transport)."""
     servers = get_mcp_servers(cfg)
     entry = CommentedMap()
@@ -158,6 +164,7 @@ def remove_mcp(cfg: CommentedMap, name: str) -> bool:
 
 # ── commands ──────────────────────────────────────────────────────────────────
 
+
 def cmd_apply(args: argparse.Namespace) -> int:
     """Point Hermes at the proxy (and MCP) and remember the prior state."""
     cfg_path = Path(args.config).expanduser()
@@ -171,22 +178,27 @@ def cmd_apply(args: argparse.Namespace) -> int:
     # re-running the installer would record Headroom itself as the "previous"
     # state and uninstall could never revert.
     current_model = cfg.get("model")
-    already_wired = (isinstance(current_model, dict)
-                     and current_model.get("provider") == f"custom:{args.provider_name}")
+    already_wired = (
+        isinstance(current_model, dict)
+        and current_model.get("provider") == f"custom:{args.provider_name}"
+    )
     if already_wired and state_path.exists():
         print("[configure_hermes] already wired; keeping existing snapshot")
     else:
         snapshot: dict[str, object] = {
-            "model": None if current_model is None
-            else json.loads(json.dumps(current_model)),
+            "model": (
+                None if current_model is None else json.loads(json.dumps(current_model))
+            ),
             "mcp_managed": bool(args.with_mcp),
         }
         if args.with_mcp:
             servers = cfg.get("mcp_servers")
-            prior = (servers.get(args.provider_name)
-                     if isinstance(servers, dict) else None)
-            snapshot["mcp_headroom"] = (_ABSENT if prior is None
-                                        else json.loads(json.dumps(prior)))
+            prior = (
+                servers.get(args.provider_name) if isinstance(servers, dict) else None
+            )
+            snapshot["mcp_headroom"] = (
+                _ABSENT if prior is None else json.loads(json.dumps(prior))
+            )
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
 
@@ -195,11 +207,17 @@ def cmd_apply(args: argparse.Namespace) -> int:
     if args.model:
         model_id = args.model
     else:
-        model_id = (current_model.get("default") or current_model.get("model")
-                    if isinstance(current_model, dict) else None)
+        model_id = (
+            current_model.get("default") or current_model.get("model")
+            if isinstance(current_model, dict)
+            else None
+        )
         if not model_id:
-            print("[configure_hermes] ERROR: no --model given and no existing "
-                  "model.default to preserve", file=sys.stderr)
+            print(
+                "[configure_hermes] ERROR: no --model given and no existing "
+                "model.default to preserve",
+                file=sys.stderr,
+            )
             return 2
 
     # Resolve context length: use --context-length, else preserve existing.
@@ -208,8 +226,11 @@ def cmd_apply(args: argparse.Namespace) -> int:
     if args.context_length:
         ctx_len = int(args.context_length)
     else:
-        ctx_len = (current_model.get("context_length")
-                   if isinstance(current_model, dict) else None)
+        ctx_len = (
+            current_model.get("context_length")
+            if isinstance(current_model, dict)
+            else None
+        )
 
     # Provider definition + active model selection.
     upsert_provider(cfg, args.provider_name, args.base_url)
@@ -223,17 +244,26 @@ def cmd_apply(args: argparse.Namespace) -> int:
     # Optional MCP server so the agent can retrieve originals on demand.
     if args.with_mcp:
         mcp_args = ["mcp", "serve", "--proxy-url", args.proxy_url]
-        upsert_mcp(cfg, args.provider_name, args.headroom_bin, mcp_args,
-                   ["headroom_retrieve", "headroom_stats"])
+        upsert_mcp(
+            cfg,
+            args.provider_name,
+            args.headroom_bin,
+            mcp_args,
+            ["headroom_retrieve", "headroom_stats"],
+        )
 
     save_config(cfg_path, cfg)
     if backup is not None:
         print(f"[configure_hermes] backup: {backup}")
-    print(f"[configure_hermes] active model -> "
-          f"custom:{args.provider_name} / {model_id}")
+    print(
+        f"[configure_hermes] active model -> "
+        f"custom:{args.provider_name} / {model_id}"
+    )
     if args.with_mcp:
-        print(f"[configure_hermes] MCP server '{args.provider_name}' wired "
-              f"(headroom_retrieve, headroom_stats)")
+        print(
+            f"[configure_hermes] MCP server '{args.provider_name}' wired "
+            f"(headroom_retrieve, headroom_stats)"
+        )
     return 0
 
 
@@ -300,13 +330,20 @@ def cmd_mcp_add(args: argparse.Namespace) -> int:
     backup = backup_config(cfg_path)
 
     mcp_args = ["mcp", "serve", "--proxy-url", args.proxy_url]
-    upsert_mcp(cfg, args.provider_name, args.headroom_bin, mcp_args,
-               ["headroom_retrieve", "headroom_stats"])
+    upsert_mcp(
+        cfg,
+        args.provider_name,
+        args.headroom_bin,
+        mcp_args,
+        ["headroom_retrieve", "headroom_stats"],
+    )
     save_config(cfg_path, cfg)
     if backup is not None:
         print(f"[configure_hermes] backup: {backup}")
-    print(f"[configure_hermes] MCP server '{args.provider_name}' added "
-          f"(headroom_retrieve, headroom_stats)")
+    print(
+        f"[configure_hermes] MCP server '{args.provider_name}' added "
+        f"(headroom_retrieve, headroom_stats)"
+    )
     return 0
 
 
@@ -324,49 +361,83 @@ def cmd_mcp_remove(args: argparse.Namespace) -> int:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct the CLI: shared options plus apply/restore/remove subcommands."""
     parser = argparse.ArgumentParser(description="Wire Headroom into Hermes config.")
-    parser.add_argument("--config", default="~/.hermes/config.yaml",
-                        help="Path to Hermes config (default: ~/.hermes/config.yaml)")
-    parser.add_argument("--state-file", default="./.runtime/model_state.json",
-                        help="Where to store the pre-wrap snapshot")
-    parser.add_argument("--provider-name", default="headroom",
-                        help="custom_providers / mcp_servers name (default: headroom)")
+    parser.add_argument(
+        "--config",
+        default="~/.hermes/config.yaml",
+        help="Path to Hermes config (default: ~/.hermes/config.yaml)",
+    )
+    parser.add_argument(
+        "--state-file",
+        default="./.runtime/model_state.json",
+        help="Where to store the pre-wrap snapshot",
+    )
+    parser.add_argument(
+        "--provider-name",
+        default="headroom",
+        help="custom_providers / mcp_servers name (default: headroom)",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_apply = sub.add_parser("apply", help="point Hermes at the Headroom proxy")
     p_apply.add_argument("--base-url", required=True)
-    p_apply.add_argument("--model", default=None,
-                         help="model id to set; if omitted, preserve the "
-                              "config's existing model.default")
-    p_apply.add_argument("--context-length", default=None,
-                         help="context window to set; if omitted, preserve "
-                              "existing or let Hermes auto-detect")
-    p_apply.add_argument("--with-mcp", action="store_true",
-                         help="also register Headroom's MCP server")
-    p_apply.add_argument("--proxy-url", default="http://127.0.0.1:8787",
-                         help="proxy base URL the MCP server connects to")
-    p_apply.add_argument("--headroom-bin", default="headroom",
-                         help="path to the headroom executable for MCP stdio")
+    p_apply.add_argument(
+        "--model",
+        default=None,
+        help="model id to set; if omitted, preserve the "
+        "config's existing model.default",
+    )
+    p_apply.add_argument(
+        "--context-length",
+        default=None,
+        help="context window to set; if omitted, preserve "
+        "existing or let Hermes auto-detect",
+    )
+    p_apply.add_argument(
+        "--with-mcp", action="store_true", help="also register Headroom's MCP server"
+    )
+    p_apply.add_argument(
+        "--proxy-url",
+        default="http://127.0.0.1:8787",
+        help="proxy base URL the MCP server connects to",
+    )
+    p_apply.add_argument(
+        "--headroom-bin",
+        default="headroom",
+        help="path to the headroom executable for MCP stdio",
+    )
     p_apply.set_defaults(func=cmd_apply)
 
-    sub.add_parser("restore", help="undo apply if Headroom is still active"
-                   ).set_defaults(func=cmd_restore)
-    sub.add_parser("remove", help="delete the headroom provider + MCP entry"
-                   ).set_defaults(func=cmd_remove)
+    sub.add_parser(
+        "restore", help="undo apply if Headroom is still active"
+    ).set_defaults(func=cmd_restore)
+    sub.add_parser(
+        "remove", help="delete the headroom provider + MCP entry"
+    ).set_defaults(func=cmd_remove)
 
-    p_mcp_add = sub.add_parser("mcp-add",
-                               help="add ONLY the Headroom MCP retrieve tool "
-                                    "(does not touch the model block)")
-    p_mcp_add.add_argument("--proxy-url", default="http://127.0.0.1:8787",
-                           help="proxy base URL the MCP server connects to")
-    p_mcp_add.add_argument("--headroom-bin", default="headroom",
-                           help="path to the headroom executable for MCP stdio")
+    p_mcp_add = sub.add_parser(
+        "mcp-add",
+        help="add ONLY the Headroom MCP retrieve tool "
+        "(does not touch the model block)",
+    )
+    p_mcp_add.add_argument(
+        "--proxy-url",
+        default="http://127.0.0.1:8787",
+        help="proxy base URL the MCP server connects to",
+    )
+    p_mcp_add.add_argument(
+        "--headroom-bin",
+        default="headroom",
+        help="path to the headroom executable for MCP stdio",
+    )
     p_mcp_add.set_defaults(func=cmd_mcp_add)
 
-    sub.add_parser("mcp-remove", help="remove ONLY the Headroom MCP entry"
-                   ).set_defaults(func=cmd_mcp_remove)
+    sub.add_parser(
+        "mcp-remove", help="remove ONLY the Headroom MCP entry"
+    ).set_defaults(func=cmd_mcp_remove)
     return parser
 
 
