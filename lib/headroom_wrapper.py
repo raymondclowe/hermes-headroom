@@ -67,10 +67,13 @@ try:
             # Success case for direct retrieve (no query)
             if "error" not in result and not query and "original_content" in result:
                 content = result["original_content"]
-                ccr_match = re.fullmatch(r"\s*<<ccr:([a-fA-F0-9]+)[^>]*>>\s*", content)
-                if ccr_match:
-                    current_hash = ccr_match.group(1).lower()
-                    continue  # Resolve the inner hash
+                if isinstance(content, str):
+                    ccr_match = re.fullmatch(
+                        r"\s*<<ccr:([a-fA-F0-9]+)[^>]*>>\s*", content
+                    )
+                    if ccr_match:
+                        current_hash = ccr_match.group(1).lower()
+                        continue  # Resolve the inner hash
                 return [TextContent(type="text", text=content)]
             break
 
@@ -84,12 +87,6 @@ try:
     if hasattr(ms, "HeadroomMCPServer"):
         ms.HeadroomMCPServer._handle_retrieve = patched_handle_retrieve
 
-    print(
-        f"[headroom-wrapper] Patched Headroom default TTL to {custom_ttl}s "
-        "and MCP retrieve output format",
-        file=sys.stderr,
-    )
-
     # Patch CompressionStore to prevent self-referential hash loops
     if hasattr(cs, "CompressionStore") and hasattr(cs.CompressionStore, "store"):
         orig_store = cs.CompressionStore.store
@@ -100,12 +97,13 @@ try:
 
             # Check if original is just a CCR marker
             # E.g., <<ccr:abc12345,string,NB>> or <<ccr:abc 100_rows_offloaded>>
-            ccr_match = re.fullmatch(r"\s*<<ccr:([a-fA-F0-9]+)[^>]*>>\s*", original)
-            if ccr_match:
-                # Bypass double compression, just return the existing hash.
-                # The proxy will use this hash to format a new marker,
-                # leaving it effectively unchanged.
-                return ccr_match.group(1).lower()
+            if isinstance(original, str):
+                ccr_match = re.fullmatch(r"\s*<<ccr:([a-fA-F0-9]+)[^>]*>>\s*", original)
+                if ccr_match:
+                    # Bypass double compression, just return the existing hash.
+                    # The proxy will use this hash to format a new marker,
+                    # leaving it effectively unchanged.
+                    return ccr_match.group(1).lower()
             return orig_store(self, original, compressed, **kwargs)
 
         cs.CompressionStore.store = patched_store
