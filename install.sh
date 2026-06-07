@@ -43,7 +43,7 @@ PROXY_BASE="http://127.0.0.1:${PORT}"
 command -v headroom >/dev/null 2>&1 || { error "headroom not installed. Run ./setup.sh."; exit 1; }
 command -v hermes   >/dev/null 2>&1 || { error "hermes not installed. See github.com/NousResearch/hermes-agent"; exit 1; }
 command -v uv       >/dev/null 2>&1 || { error "uv not installed. Run ./setup.sh."; exit 1; }
-HEADROOM_BIN="$(command -v headroom)"
+HEADROOM_BIN="$SCRIPT_DIR/lib/headroom_wrapper.py"
 
 # systemd --user needs a session bus; on some headless/sudo shells it is unset.
 if ! systemctl --user show-environment >/dev/null 2>&1; then
