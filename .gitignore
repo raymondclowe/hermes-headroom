@@ -9,3 +9,4 @@ __pycache__/
 
 # Headroom
 headroom_memory.db
+recommendations.toml
